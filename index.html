@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Gerver Sofa — Dependency Graph</title>
+<script src="graph_data.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0d0d0f; font-family: system-ui, sans-serif; overflow: hidden; }
+#wrap { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+#stage { position: relative; flex: 1; overflow: hidden; }
+#c { position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: default; }
+#controls {
+  padding: 7px 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: #0d0d0f;
+  border-top: 0.5px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+}
+button {
+  font-size: 10px;
+  padding: 3px 9px;
+  border-radius: 4px;
+  border: 0.5px solid rgba(255,255,255,0.15);
+  background: transparent;
+  color: rgba(255,255,255,0.4);
+  cursor: pointer;
+}
+button.active { background: rgba(56,138,221,0.15); color: #6ab4f5; border-color: rgba(56,138,221,0.45); }
+label { font-size: 10px; color: rgba(255,255,255,0.35); display: flex; align-items: center; gap: 4px; }
+input[type=range] { width: 60px; accent-color: #6ab4f5; }
+#info { font-size: 10px; color: rgba(255,255,255,0.22); margin-left: auto; }
+#popup {
+  display: none;
+  position: absolute;
+  z-index: 50;
+  width: 260px;
+  background: #16161a;
+  border: 0.5px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 14px 16px;
+  pointer-events: auto;
+}
+#popup .pt { font-size: 12px; font-weight: 500; color: #e8e6e0; margin-bottom: 6px; }
+#popup .tag { font-size: 9px; padding: 2px 6px; border-radius: 2px; letter-spacing: .08em; text-transform: uppercase; display: inline-block; margin-bottom: 8px; }
+#popup .pc { font-size: 11px; line-height: 1.6; color: rgba(232,230,224,0.6); }
+#popup .deps { margin-top: 8px; padding-top: 8px; border-top: 0.5px solid rgba(255,255,255,0.07); font-size: 9px; color: rgba(255,255,255,0.25); }
+#popup .deps span { display: inline-block; margin: 2px; padding: 1px 5px; border: 0.5px solid rgba(255,255,255,0.1); border-radius: 2px; }
+#popup .xbtn { position: absolute; top: 10px; right: 11px; background: none; border: none; color: rgba(255,255,255,0.25); cursor: pointer; font-size: 13px; padding: 0; line-height: 1; }
+#legend {
+  position: absolute;
+  bottom: 12px;
+  left: 14px;
+  pointer-events: none;
+}
+.leg { display: flex; align-items: center; gap: 6px; font-size: 9px; color: rgba(255,255,255,0.3); margin-bottom: 3px; letter-spacing: .05em; }
+.leg-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="popup">
+      <button class="xbtn" id="xbtn">✕</button>
+      <div class="pt" id="pt"></div>
+      <span class="tag" id="ptag"></span>
+      <div class="pc" id="pc"></div>
+      <div class="deps" id="pdeps"></div>
+    </div>
+    <div id="legend">
+      <div class="leg"><div class="leg-dot" style="background:#6a9fd8"></div>theorem</div>
+      <div class="leg"><div class="leg-dot" style="background:#6dbf8e"></div>lemma</div>
+      <div class="leg"><div class="leg-dot" style="background:#d4856a"></div>corollary</div>
+      <div class="leg"><div class="leg-dot" style="background:#c4a35a"></div>proposition</div>
+      <div class="leg"><div class="leg-dot" style="background:#a08cc8"></div>definition</div>
+      <div class="leg"><div class="leg-dot" style="background:#888780"></div>remark</div>
+    </div>
+  </div>
+  <div id="controls">
+    <button id="btn-shape" class="active">sofa shape</button>
+    <button id="btn-free"  class="active">free force</button>
+    <button id="btn-reset">reset</button>
+    <label><input type="checkbox" id="chk-links" checked> links</label>
+    <label><input type="checkbox" id="chk-outline" checked> outline</label>
+    <label>strength <input type="range" id="sl" min="0" max="100" value="45"> <span id="slv">45</span></label>
+    <span id="info"></span>
+  </div>
+</div>
+
+<script>
+
+// Mathematica polygon coords (exact, from the provided code)
+// These trace the outer boundary of Gerver's sofa
+const MATH_COORDS = [
+[-0.002931102747568361,0.05518676049838907],[-0.0075077211477384,0.09053224433819837],[-0.013606412660485952,0.1253351796409147],[-0.02120120315269523,0.15953289495971165],[-0.030263707684347576,0.19306373142378394],[-0.040763166503033424,0.22586713013002274],[-0.05266648405966139,0.2578837183204711],[-0.06593827100576961,0.28905539424496024],[-0.08054088912959365,0.3193254106095894],[-0.09643449918483407,0.34863845651307224],[-0.11357711156289788,0.3769407377744405],[-0.1319246397562651,0.4041800555571583],[-0.15143095655755753,0.43030588319636326],[-0.17204795293586453,0.45526944113771095],[-0.19372559952891225,0.4790237698981564],[-0.21641201068675506,0.5015238009609528],[-0.2400535109998163,0.522726425519191],[-0.26459470424132275,0.5425905609843353],[-0.28997854465145556,0.5610772151784293],[-0.3161464104878934,0.5781495481309521],[-0.34303817976484235,0.5937729314036967],[-0.370592308100146,0.6079150048695116],[-0.3987459085876401,0.6205457308733012],[-0.4274348336095711,0.6316374457063071],[-0.4565937585016293,0.6411649083273959],[-0.48615626698096903,0.6491053462678579],[-0.5160358229611974,0.6554156021434079],[-0.5461316059131602,0.6600426635877341],[-0.5763764300476724,0.6629794331345903],[-0.6067035922391745,0.6642219172844704],[-0.6370462979339245,0.6637684267295264],[-0.6673377353194726,0.6616195780275219],[-0.6975111495100281,0.6577782929908836],[-0.727499916679408,0.6522497957913859],[-0.7572246746503857,0.645057960820489],[-0.7865796945555036,0.63626619093454],[-0.8154954846739376,0.6258992640285892],[-0.8439062017278565,0.6139812781607924],[-0.8717471399538075,0.6005387757685603],[-0.8989548155992705,0.5856006962499344],[-0.9254670496080297,0.5691983257620765],[-0.9512230484058931,0.5513652443018654],[-0.976163482700509,0.5321372701363265],[-1.0002305642113472,0.51155240165329],[-1.0233681202482943,0.4896507567052537],[-1.045521666059788,0.46647450952194436],[-1.0666384748739537,0.4420678252694908],[-1.0866676455588282,0.41647679233647555],[-1.1055601678304374,0.389749352429386],[-1.1232689849402542,0.36193522856216287],[-1.1397490537763817,0.33308585102662447],[-1.1549574023156846,0.3032542814325403],[-1.1688531843670402,0.2724951349080245],[-1.1813977315488688,0.24086450055272687],[-1.192554602447161,0.208419860238005],[-1.2022896289033165,0.17522000584987357],[-1.2105709593842584,0.1413249550720373],[-1.2173690993904753,0.10679586580772375],[-1.2226569488608843,0.07169494934034183],[-1.224595356112935,0.05518676049838907],[-1.226164284520757,0.05393398196390663],[-1.227838485878468,0.052637306541543444],[-1.2296195873906839,0.051299594902786044],[-1.2315091543658316,0.04992374603163245],[-1.2335086894420904,0.048512696014961686],[-1.2356196318356432,0.04706941681843678],[-1.2378433566114944,0.045596915048337586],[-1.2401811739771011,0.04409823069972405],[-1.2426343285990682,0.042576435891334995],[-1.2452039989431383,0.04103463358763164],[-1.2478912966377111,0.039475956308399146],[-1.2506972658611129,0.03790356482632364],[-1.25362288275283,0.03632064685296571],[-1.2566690548489214,0.03473041571355542],[-1.2598366205418015,0.03313610901103731],[-1.2631263485645952,0.031540987279797435],[-1.266538937500247,0.029948332629507732],[-1.270075015315565,0.02836144737952641],[-1.2737351389203686,0.02678365268429606],[-1.2775197937519045,0.025218287150184128],[-1.2814293933846885,0.02366870544421342],[-1.285464279165918,0.022138276895132772],[-1.289624719876597,0.02063038408728084],[-1.2939109114185072,0.019148421447698342],[-1.2983229765271467,0.01769579382694633],[-1.3028609645107572,0.016275915074090402],[-1.3075248510155446,0.014892206606312741],[-1.312314537817196,0.013548095973615792],[-1.3172298526387862,0.012247015419083246],[-1.322270548995155,0.010992400435165577],[-1.327436306063838,0.00978768831645895],[-1.3327267285826143,0.008636316709447676],[-1.3381413467737344,0.007541722159681663],[-1.3436796162948779,0.0065073386568613965],[-1.34934091821689,0.005536596178303978],[-1.3551245590283292,0.0046329192312645545],[-1.3610297706668522,0.003799725394588215],[-1.367055710577463,0.003040423860167941],[-1.3732014617976305,0.002358413974684651],[-1.3794660330692792,0.00175708378210564],[-1.385848358977654,0.0012398085674178777],[-1.3923473001170357,0.0008099494020726023],[-1.398961643283296,0.0004708516916175473],[-1.406144222619559,0.00021031225587999969],[-1.413554883601666,0.000050270067591080924],[-2.2275264588605035,0],[-2.2275264588605035,0.],[-2.226778818785235,0.016562087318832297],[-2.2245240237876267,0.051858217785779606],[-2.221401977586004,0.08671801400284965],[-2.2174344169630595,0.12111218014518921],[-2.2126442129613957,0.1550122774857072],[-2.2070553402787363,0.18839076838343466],[-2.20069284502541,0.22122105923695135],[-2.193582810877922,0.2534775423446123],[-2.1857523236644165,0.2851356366143848],[-2.177229434419805,0.3161718270672522],[-2.1680431209502307,0.34656370307934997],[-2.158223247948455,0.3762899953092721],[-2.1478005257035693,0.4053306112583223],[-2.1368064674502505,0.433666669412881],[-2.125273345404538,0.46128053191951573],[-2.1132341455348063,0.488155835744978],[-2.1007225211182936,0.5142775222748028],[-2.087772745135142,0.5396318653058545],[-2.0744196615534736,0.5642064973898445],[-2.060698635560539,0.5879904344865842],[-2.0466455027964265,0.6109740988875171],[-2.0322965176482186,0.633149340371914],[-2.017688300663814,0.6545094555599938],[-2.0028577851459275,0.6750492054291635],[-1.987842162987986,0.6947648309615369],[-1.9726814269605326,0.7136508981032055],[-1.957450991769296,0.731662322793316],[-1.9421991235397567,0.748792495552475],[-1.9269606024142123,0.7650523754383158],[-1.911769627125311,0.780454115453369],[-1.8966597768986881,0.7950110398039961],[-1.8816639741427468,0.808737619997373],[-1.8668144479599484,0.8216494498020146],[-1.8517349056071764,0.834092528316528],[-1.8344565141786922,0.8476307429841015],[-1.8170997087010683,0.8605292060035924],[-1.799685718636366,0.8727928624663366],[-1.7822354667372662,0.8844273199469717],[-1.7647695491743782,0.8954388359889434],[-1.7473082161045403,0.9058343050101234],[-1.7298713526966911,0.915621244642947],[-1.7124784606314394,0.9248077815239432],[-1.6951486400900015,0.9334026365479858],[-1.6779005722476972,0.9414151096030314],[-1.660752502286706,0.9488550638015343],[-1.6437222229422959,0.9557329092251386],[-1.6268270585962146,0.9620595861996474],[-1.6100838499304209,0.9678465481176384],[-1.5935089391537998,0.9731057438264732],[-1.5771181558139633,0.9778495995997846],[-1.5609268032056878,0.9820910007108642],[-1.54494964538698,0.9858432726266891],[-1.5292008948131945,0.9891201618416232],[-1.513694200599049,0.9919358163701126],[-1.4984426374178013,0.9943047659179616],[-1.4834586950462574,0.9962419017520215],[-1.4687542685636858,0.997762456288358],[-1.4543406492121078,0.9988819824191736],[-1.4402285159248214,0.9996163325989604],[0.19311838528487416,1],[0.20588049050780868,0.9998371021345642],[0.2192296636403373,0.9993215654426753],[0.2334833544817059,0.998409999760843],[0.2480336396227507,0.9971058467423422],[0.26286955423838015,0.9953933906899533],[0.2779795250526531,0.9932572252276954],[0.2933513791219686,0.9906822741052125],[0.30897235328337636,0.9876538117518396],[0.3248291042608626,0.9841574835599668],[0.3409077194218601,0.9801793258775161],[0.35719372817562994,0.9757057856895764],[0.3736721140045674,0.970723739969473],[0.3903273271188975,0.9652205146798088],[0.4071432977246433,0.959183903404288],[0.4241034498941795,0.9526021855914221],[0.4411907160281173,0.9454641443915238],[0.4583875518967129,0.937759084068725],[0.47567595224844217,0.9294768469700844],[0.4930374669728525,0.9206078300342161],[0.5104532178042704,0.9111430008222366],[0.5279039155524319,0.9010739130542164],[0.5453698778455953,0.8903927216347229],[0.5628310473712049,0.8790921971514634],[0.5802670105986886,0.8671657398314587],[0.5976570169685093,0.8546073929396361],[0.6149799985311277,0.8414118556051765],[0.6314182808508729,0.8282253766914024],[0.6461766128290161,0.8157424492007895],[0.6610981587900323,0.8024535614782687],[0.676151075050036,0.7883425302944325],[0.6913028054558849,0.7733942808343234],[0.7065201174207641,0.7575948723338161],[0.721769138799335,0.740931522593583],[0.7370153955684994,0.7233926313446152],[0.7522232021019651,0.7049686061727517],[0.7673224743481131,0.6856947006839664],[0.7822566151866801,0.6655952729083485],[0.7969883169142729,0.6446732846774187],[0.8114805011649897,0.622933185417566],[0.8256963734541855,0.6003808975141803],[0.8395994769976157,0.5770237997908648],[0.8531537457436141,0.5528707091344943],[0.8663235565571386,0.5279318602988776],[0.8790737804957698,0.5022188839217362],[0.8913698331190544,0.47574478279161564],[0.9031777237739482,0.44852390640320844],[0.9144641038005427,0.42057192384137776],[0.9251963136037343,0.39190579503593526],[0.9353424285380356,0.36254374043093585],[0.944871303554305,0.33250520911390946],[0.9537526165588203,0.3018108454520528],[0.9619569104367979,0.270482454283951],[0.9694556336941986,0.23854296471688527],[0.9762211796734368,0.2060163925812137],[0.9822269243004318,0.17292780159468057],[0.9874472623223037,0.1393032632908148],[0.9918576419969158,0.10516981576682403],[0.9954345981974063,0.07055542130756808],[0.9981557838968255,0.03548892294331121],[1.,0.],[0.19311838528487416,0],[0.1874409947124228,0.00003223380273019824],[0.18176433615552234,0.00012893105484863916],[0.17608914153534122,0.0002900792886747254],[0.17072035228968882,0.0005027722156384899],[0.1656532713889946,0.0007618524484453913],[0.16065380121966927,0.0010744279966994235],[0.15572249501578242,0.0014389973736303092],[0.1508598806371257,0.001854053520359627],[0.14606646051507272,0.0023180841884660125],[0.14134271160385464,0.0028295723230492846],[0.13668908533725474,0.003386996446219851],[0.13210600759072597,0.00398883104093973],[0.12759387864893362,0.004633546935141488],[0.12315307317872416,0.0053196116860514215],[0.11878394020752048,0.006045489964643271],[0.11448680310714347,0.006809643940148828],[0.11026195958305766,0.007610533664551798],[0.10610968166903861,0.008446617456991325],[0.10203021572725847,0.009316352288001662],[0.09802378245378514,0.01021819416351454],[0.0940905768894895,0.011150598508550835],[0.09023076843635428,0.012112020550528296],[0.08644450087917692,0.01310091570211215],[0.08273189241265845,0.014115739943535523],[0.0790930356738685,0.015154950204316786],[0.07552799778007638,0.01621700474430108],[0.07203682037193698,0.01730036353395334],[0.06861951966201911,0.018403488633830487],[0.06527608648866302,0.019524844573160435],[0.06200648637515322,0.020662898727455924],[0.05881065959419109,0.021816121695091298],[0.055688521237651674,0.022982987672770593],[0.05263996129160721,0.02416197482981559],[0.04966484471659989,0.0253515656812026],[0.046763011533144626,0.026550247459277147],[0.04393427691244225,0.0277565124840759],[0.04117843127228228,0.02896885853218551],[0.038495240378113714,0.0301857892040683],[0.035884445449261136,0.031405814289785054],[0.033345763270262736,0.032627450133045466],[0.030878886307305824,0.033849219993517185],[0.02848348282973449,0.03506965440732461],[0.02615919703660319,0.036287291545669134],[0.023905649188249174,0.037500677571502695],[0.021722435742855702,0.03870836699418697],[0.019609129497977183,0.03990892302207102],[0.017565279736996415,0.04110091791292033],[0.015590412380483283,0.04228293332213097],[0.013684030142423368,0.0434535606486626],[0.01184561269128407,0.04461140137862486],[0.010074616815884962,0.04575506742645193],[0.008370476596038278,0.0468831814736004],[0.006732603577924528,0.04799437730470638],[0.005160386954167458,0.04908730014113797],[0.003653193748571674,0.05016060697187968],[0.0022103690054854695,0.051212966881686264],[0.000831235983750525,0.05224306137644338],[-0.0004849036448006258,0.0532495847056735],[-0.0017387695923393124,0.05423124418212578],[-0.002931102747568361,0.05518676049838907]
+];
+
+const COLOR = {
+  thm:  {fill:'#6a9fd8', stroke:'#185FA5', text:'#0a2a50', hi:'#185FA5', tag:'rgba(106,159,216,0.2)', tagT:'#6ab4f5'},
+  lem:  {fill:'#6dbf8e', stroke:'#0F6E56', text:'#03281f', hi:'#0F6E56', tag:'rgba(109,191,142,0.2)', tagT:'#6dbf8e'},
+  cor:  {fill:'#d4856a', stroke:'#993C1D', text:'#3d1509', hi:'#993C1D', tag:'rgba(212,133,106,0.2)', tagT:'#d4856a'},
+  prop: {fill:'#c4a35a', stroke:'#854F0B', text:'#321d03', hi:'#854F0B', tag:'rgba(196,163,90,0.2)',  tagT:'#c4a35a'},
+  def:  {fill:'#a08cc8', stroke:'#534AB7', text:'#1c1445', hi:'#534AB7', tag:'rgba(160,140,200,0.2)', tagT:'#a08cc8'},
+  rem:  {fill:'#888780', stroke:'#5F5E5A', text:'#222',    hi:'#5F5E5A', tag:'rgba(136,135,128,0.2)', tagT:'#aaa'},
+};
+const TYPE_NAME = {thm:'Theorem',lem:'Lemma',cor:'Corollary',prop:'Proposition',def:'Definition',rem:'Remark'};
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const DPR = devicePixelRatio || 1;
+let W, H, SCALE, OX, OY;
+
+// The Mathematica coords go from about x=-2.23 to x=1, y=0 to y=1
+// We need to map them to canvas coords
+// The sofa spans: xMin=-2.2275, xMax=1.0, yMin=0, yMax=1.0
+// We want it centered and scaled nicely
+const MATH_X_MIN = -2.2275264588605035;
+const MATH_X_MAX = 1.0;
+const MATH_Y_MIN = 0.0;
+const MATH_Y_MAX = 1.0;
+const MATH_W = MATH_X_MAX - MATH_X_MIN;
+const MATH_H = MATH_Y_MAX - MATH_Y_MIN;
+
+function mathToCanvas(mx, my) {
+  // Normalize to [0,1]
+  const nx = (mx - MATH_X_MIN) / MATH_W;
+  const ny = (my - MATH_Y_MIN) / MATH_H;
+  // Map to canvas with padding
+  const PAD = 0.07;
+  const availW = W * (1 - 2*PAD);
+  const availH = H * (1 - 2*PAD);
+  // Fit maintaining aspect ratio
+  const fitScale = Math.min(availW / MATH_W, availH / MATH_H);
+  const drawW = MATH_W * fitScale;
+  const drawH = MATH_H * fitScale;
+  const offX = (W - drawW) / 2;
+  const offY = (H - drawH) / 2;
+  return {
+    x: offX + (mx - MATH_X_MIN) * fitScale,
+    y: offY + (MATH_Y_MAX - my) * fitScale  // flip Y (math y-up → canvas y-down)
+  };
+}
+
+function getFitScale() {
+  const PAD = 0.07;
+  return Math.min(W*(1-2*PAD)/MATH_W, H*(1-2*PAD)/MATH_H);
+}
+
+function resize() {
+  const stage = document.getElementById('stage');
+  W = stage.clientWidth;
+  H = stage.clientHeight;
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  recomputeTargets();
+}
+
+// Build outer boundary (exclude the bottom flat/inner section)
+// The polygon goes: left curved edge → top arc → right side → bottom right → bottom flat line
+// → inner notch bottom section → back up
+// We want ONLY the outer convex boundary for node placement
+// Identify the boundary: the "outer" part is the curved portion from
+// the left arc and top arc. The bottom flat and inner notch are excluded.
+// Strategy: sample the full polygon path, but only keep points where
+// the path forms the outer silhouette (large arc portion).
+
+function getOuterBoundaryPoints() {
+  // The polygon coords trace: left side (index 0..~60 going left along bottom),
+  // then the big left arc and top arc (index ~60..~175), then right arc (175..~220),
+  // then bottom right, then bottom flat, then inner bottom curve (lower return path).
+  // For boundary nodes, we want the outer curved portion.
+  // Heuristic: exclude points where y < 0.03 (these are near-bottom flat/return path)
+  const outer = [];
+  for (let i = 0; i < MATH_COORDS.length; i++) {
+    const [mx, my] = MATH_COORDS[i];
+    // Keep points that form the "outer visible boundary" (not near-bottom flat)
+    if (my > 0.04) {
+      outer.push([mx, my]);
+    }
+  }
+  return outer;
+}
+
+const OUTER_PTS = getOuterBoundaryPoints();
+
+const N = NODES.length;
+const nodeMap = {};
+
+function recomputeTargets() {
+  NODES.forEach((d, i) => {
+    const idx = Math.floor(i * OUTER_PTS.length / N) % OUTER_PTS.length;
+    const [mx, my] = OUTER_PTS[idx];
+    const c = mathToCanvas(mx, my);
+    d.tx = c.x;
+    d.ty = c.y;
+    if (!d._init) {
+      d.x = c.x + (Math.random()-0.5)*40;
+      d.y = c.y + (Math.random()-0.5)*40;
+      d.vx = 0; d.vy = 0;
+      d._init = true;
+    }
+  });
+}
+
+NODES.forEach(d => { nodeMap[d.id] = d; });
+const links = EDGES.map(e => ({
+  source: nodeMap[e.source],
+  target: nodeMap[e.target],
+  type: e.type
+})).filter(l => l.source && l.target);
+
+// Dep lists for popup
+NODES.forEach(d => {
+  d.uses   = links.filter(l => l.source === d).map(l => l.target.id);
+  d.usedBy = links.filter(l => l.target === d).map(l => l.source.id);
+});
+
+let shapeOn = true, freeOn = true, showLinks = true, showOutline = true;
+let shapeStr = 0.45;
+let hovered = null, selected = null, dragging = null, dragOx = 0, dragOy = 0;
+
+document.getElementById('btn-shape').onclick = () => { shapeOn = !shapeOn; document.getElementById('btn-shape').classList.toggle('active', shapeOn); };
+document.getElementById('btn-free').onclick  = () => { freeOn  = !freeOn;  document.getElementById('btn-free').classList.toggle('active', freeOn); };
+document.getElementById('btn-reset').onclick = () => {
+  NODES.forEach(d => { d.x=d.tx+(Math.random()-.5)*40; d.y=d.ty+(Math.random()-.5)*40; d.vx=d.vy=0; });
+};
+document.getElementById('chk-links').onchange = e => showLinks = e.target.checked;
+document.getElementById('chk-outline').onchange = e => showOutline = e.target.checked;
+document.getElementById('sl').oninput = e => { shapeStr=e.target.value/100; document.getElementById('slv').textContent=e.target.value; };
+document.getElementById('xbtn').onclick = () => { document.getElementById('popup').style.display='none'; selected=null; };
+
+function nodeR(d) { return Math.max(4, 4 + d.weight * 0.45); }
+
+function showPopup(node) {
+  selected = node;
+  const pop = document.getElementById('popup');
+  const c = COLOR[node.type] || COLOR.def;
+  document.getElementById('pt').textContent = (TYPE_NAME[node.type]||node.type) + ': ' + node.label;
+  const tag = document.getElementById('ptag');
+  tag.textContent = TYPE_NAME[node.type] || node.type;
+  tag.style.background = c.tag;
+  tag.style.color = c.tagT;
+  document.getElementById('pc').textContent = 'weight: ' + node.weight + ' (in:' + node.indeg + ', out:' + node.outdeg + ')';
+  const deps = document.getElementById('pdeps');
+  deps.innerHTML = '';
+  if (node.usedBy.length) {
+    const h = document.createElement('div');
+    h.style.cssText = 'font-size:8px;letter-spacing:.08em;color:#444;margin-bottom:3px;';
+    h.textContent = 'REFERENCED BY';
+    deps.appendChild(h);
+    node.usedBy.slice(0,12).forEach(id => {
+      const s = document.createElement('span');
+      s.textContent = id.replace(/_/g,' ').replace(/-/g,' ');
+      deps.appendChild(s);
+    });
+    if (node.usedBy.length > 12) {
+      const s = document.createElement('span');
+      s.textContent = '+' + (node.usedBy.length - 12) + ' more';
+      deps.appendChild(s);
+    }
+  }
+  if (node.uses.length) {
+    const h = document.createElement('div');
+    h.style.cssText = 'font-size:8px;letter-spacing:.08em;color:#444;margin:5px 0 3px;';
+    h.textContent = 'REFERENCES';
+    deps.appendChild(h);
+    node.uses.slice(0,12).forEach(id => {
+      const s = document.createElement('span');
+      s.textContent = id.replace(/_/g,' ').replace(/-/g,' ');
+      deps.appendChild(s);
+    });
+    if (node.uses.length > 12) {
+      const s = document.createElement('span');
+      s.textContent = '+' + (node.uses.length - 12) + ' more';
+      deps.appendChild(s);
+    }
+  }
+  const pw = 260;
+  let left = node.x + 14, top = node.y - 20;
+  if (left + pw > W - 10) left = node.x - pw - 14;
+  top = Math.max(5, Math.min(H - 200, top));
+  pop.style.left = left+'px'; pop.style.top = top+'px';
+  pop.style.display = 'block';
+}
+
+function getPos(e) {
+  const r = canvas.getBoundingClientRect();
+  const touch = e.touches ? e.touches[0] : e;
+  return { mx: touch.clientX - r.left, my: touch.clientY - r.top };
+}
+function findNode(mx,my) {
+  return NODES.find(d => Math.hypot(d.x-mx,d.y-my) < nodeR(d)+3);
+}
+
+canvas.onmousedown = e => {
+  const {mx,my} = getPos(e);
+  dragging = findNode(mx,my);
+  if (dragging) { dragOx=mx-dragging.x; dragOy=my-dragging.y; }
+};
+canvas.onmousemove = e => {
+  const {mx,my} = getPos(e);
+  if (dragging) { dragging.x=mx-dragOx; dragging.y=my-dragOy; dragging.vx=dragging.vy=0; canvas.style.cursor='grabbing'; return; }
+  hovered = findNode(mx,my)||null;
+  canvas.style.cursor = hovered?'pointer':'default';
+  document.getElementById('info').textContent = hovered ? hovered.label+' ['+hovered.type+'] w='+hovered.weight : '';
+};
+canvas.onmouseup = () => { dragging=null; };
+canvas.onclick = e => {
+  const {mx,my} = getPos(e);
+  const nd = findNode(mx,my);
+  if (nd) showPopup(nd);
+  else { document.getElementById('popup').style.display='none'; selected=null; }
+};
+canvas.onmouseleave = () => { dragging=null; hovered=null; };
+
+function tick() {
+  const alpha = 0.08, damp = 0.78;
+  if (shapeOn) {
+    NODES.forEach(d => {
+      if (d===dragging) return;
+      d.vx += (d.tx-d.x)*shapeStr*alpha;
+      d.vy += (d.ty-d.y)*shapeStr*alpha;
+    });
+  }
+  if (freeOn) {
+    links.forEach(l => {
+      const dx=l.target.x-l.source.x, dy=l.target.y-l.source.y;
+      const dist=Math.hypot(dx,dy)||1;
+      const f=(dist-55)/dist*0.025*alpha;
+      if(l.source!==dragging){l.source.vx+=dx*f;l.source.vy+=dy*f;}
+      if(l.target!==dragging){l.target.vx-=dx*f;l.target.vy-=dy*f;}
+    });
+    for (let i=0;i<N;i++) {
+      for (let j=i+1;j<N;j++) {
+        const a=NODES[i],b=NODES[j];
+        const dx=b.x-a.x,dy=b.y-a.y;
+        const d2=dx*dx+dy*dy+0.1;
+        const fd=Math.sqrt(d2);
+        const f=900/d2*alpha/fd;
+        if(a!==dragging){a.vx-=dx*f;a.vy-=dy*f;}
+        if(b!==dragging){b.vx+=dx*f;b.vy+=dy*f;}
+      }
+    }
+  }
+  NODES.forEach(d => {
+    if(d===dragging)return;
+    d.vx*=damp;d.vy*=damp;
+    d.x+=d.vx;d.y+=d.vy;
+  });
+}
+
+function drawSofa() {
+  const fitScale = getFitScale();
+  const PAD = 0.07;
+  const drawW = MATH_W * fitScale;
+  const drawH = MATH_H * fitScale;
+  const offX = (W - drawW) / 2;
+  const offY = (H - drawH) / 2;
+
+  ctx.save();
+  ctx.beginPath();
+  MATH_COORDS.forEach(([mx,my],i) => {
+    const cx = offX + (mx - MATH_X_MIN)*fitScale;
+    const cy = offY + (MATH_Y_MAX - my)*fitScale;
+    i===0 ? ctx.moveTo(cx,cy) : ctx.lineTo(cx,cy);
+  });
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(100,130,180,0.06)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(100,150,220,0.30)';
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([6,4]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function drawLinks() {
+  const focus = hovered || selected;
+  links.forEach(l => {
+    const active = focus && (l.source===focus||l.target===focus);
+    const dim = focus && !active;
+    ctx.save();
+    ctx.globalAlpha = dim ? 0.05 : (active ? 0.88 : 0.18);
+    const sx=l.source.x,sy=l.source.y,tx=l.target.x,ty=l.target.y;
+    const dx=tx-sx,dy=ty-sy,dist=Math.hypot(dx,dy)||1;
+    const r=nodeR(l.target)+1;
+    const ex=tx-dx/dist*r, ey=ty-dy/dist*r;
+    const sx2=sx+dx/dist*(nodeR(l.source)+1), sy2=sy+dy/dist*(nodeR(l.source)+1);
+
+    ctx.beginPath();
+    ctx.moveTo(sx2,sy2); ctx.lineTo(ex,ey);
+    ctx.strokeStyle = active ? '#c8a96e' : 'rgba(180,175,165,1)';
+    ctx.lineWidth = active ? 1.4 : (l.type==='solid'?0.6:0.4);
+    if (l.type==='dashed') ctx.setLineDash([3,3]);
+    else if (l.type==='dotted') ctx.setLineDash([1,4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (active) {
+      const ang=Math.atan2(ey-sy2,ex-sx2);
+      ctx.beginPath();
+      ctx.moveTo(ex,ey);
+      ctx.lineTo(ex-6*Math.cos(ang-0.4),ey-6*Math.sin(ang-0.4));
+      ctx.moveTo(ex,ey);
+      ctx.lineTo(ex-6*Math.cos(ang+0.4),ey-6*Math.sin(ang+0.4));
+      ctx.stroke();
+    }
+    ctx.restore();
+  });
+}
+
+function drawNode(d) {
+  const c = COLOR[d.type] || COLOR.def;
+  const r = nodeR(d);
+  const focus = hovered||selected;
+  const isHov = d===hovered, isSel = d===selected;
+  const isConn = focus && links.some(l=>(l.source===focus&&l.target===d)||(l.target===focus&&l.source===d));
+  const dim = focus && !isHov && !isSel && !isConn;
+
+  ctx.save();
+  ctx.globalAlpha = dim ? 0.12 : 1.0;
+
+  if (d.weight >= 8 && !dim) {
+    ctx.beginPath(); ctx.arc(d.x,d.y,r+4,0,Math.PI*2);
+    ctx.strokeStyle = c.fill+'55'; ctx.lineWidth=1.5; ctx.stroke();
+  }
+
+  ctx.beginPath();
+  if (d.type==='thm') {
+    for(let i=0;i<5;i++){const a=i/5*Math.PI*2-Math.PI/2;i===0?ctx.moveTo(d.x+r*Math.cos(a),d.y+r*Math.sin(a)):ctx.lineTo(d.x+r*Math.cos(a),d.y+r*Math.sin(a));}
+    ctx.closePath();
+  } else if (d.type==='def') {
+    ctx.moveTo(d.x,d.y-r);ctx.lineTo(d.x+r*.88,d.y);ctx.lineTo(d.x,d.y+r);ctx.lineTo(d.x-r*.88,d.y);ctx.closePath();
+  } else if (d.type==='rem') {
+    ctx.rect(d.x-r*.85,d.y-r*.85,r*1.7,r*1.7);
+  } else {
+    ctx.arc(d.x,d.y,r,0,Math.PI*2);
+  }
+
+  ctx.fillStyle = (isHov||isSel) ? c.hi : c.fill+'55';
+  ctx.fill();
+  ctx.strokeStyle = c.fill;
+  ctx.lineWidth = (isHov||isSel) ? 2 : 0.8;
+  ctx.stroke();
+
+  if (r > 6) {
+    ctx.fillStyle = (isHov||isSel) ? '#fff' : c.fill;
+    ctx.font = `${Math.max(6, r*0.65)}px system-ui`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    // Show shortened label
+    const words = d.label.split(' ');
+    const short = words.length > 2 ? words.slice(0,2).join(' ')+'…' : d.label;
+    ctx.fillText(short.substring(0,12), d.x, d.y);
+  }
+  ctx.restore();
+}
+
+function loop() {
+  for(let i=0;i<3;i++) tick();
+  ctx.clearRect(0,0,W,H);
+  if(showOutline) drawSofa();
+  if(showLinks) drawLinks();
+  NODES.forEach(drawNode);
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('resize', () => { resize(); });
+resize();
+loop();
+</script>
+</body>
+</html>
