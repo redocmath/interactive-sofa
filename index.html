@@ -86,13 +86,16 @@ input[type=range] { width: 60px; accent-color: #6ab4f5; }
     <button id="btn-reset">reset</button>
     <label><input type="checkbox" id="chk-links" checked> links</label>
     <label><input type="checkbox" id="chk-outline" checked> outline</label>
-    <label>strength <input type="range" id="sl" min="0" max="100" value="45"> <span id="slv">45</span></label>
+    <label>free force <input type="range" id="sl" min="0" max="100" value="45"> <span id="slv">45</span></label>
+    <label>boundary ▶sofa <input type="range" id="sl-boundary" min="0" max="200" value="120"> <span id="sl-boundary-v">120</span></label>
+    <label>penalty ∑|e\G| <input type="range" id="sl-penalty" min="0" max="200" value="100"> <span id="sl-penalty-v">100</span></label>
+    <label>edge α <input type="range" id="sl-ealpha" min="0" max="100" value="18"> <span id="sl-ealpha-v">18</span></label>
+    <label>edge width <input type="range" id="sl-ewidth" min="1" max="40" value="5"> <span id="sl-ewidth-v">5</span></label>
     <span id="info"></span>
   </div>
 </div>
 
 <script>
-
 // Mathematica polygon coords (exact, from the provided code)
 // These trace the outer boundary of Gerver's sofa
 const MATH_COORDS = [
@@ -150,6 +153,118 @@ function getFitScale() {
   return Math.min(W*(1-2*PAD)/MATH_W, H*(1-2*PAD)/MATH_H);
 }
 
+// ── Sofa geometry helpers ──────────────────────────────────────────────────
+
+// Return the current canvas polygon of the sofa (recomputed each frame lazily)
+let _sofaPolyCache = null;
+let _sofaPolyCacheKey = '';
+function getSofaCanvasPoly() {
+  const key = W + ',' + H;
+  if (_sofaPolyCacheKey === key && _sofaPolyCache) return _sofaPolyCache;
+  const fitScale = getFitScale();
+  const drawW = MATH_W * fitScale;
+  const drawH = MATH_H * fitScale;
+  const offX = (W - drawW) / 2;
+  const offY = (H - drawH) / 2;
+  _sofaPolyCache = MATH_COORDS.map(([mx,my]) => ({
+    x: offX + (mx - MATH_X_MIN)*fitScale,
+    y: offY + (MATH_Y_MAX - my)*fitScale
+  }));
+  _sofaPolyCacheKey = key;
+  return _sofaPolyCache;
+}
+
+// Point-in-polygon (ray casting)
+function pointInSofa(px, py) {
+  const poly = getSofaCanvasPoly();
+  let inside = false;
+  for (let i = 0, j = poly.length-1; i < poly.length; j=i++) {
+    const xi=poly[i].x, yi=poly[i].y, xj=poly[j].x, yj=poly[j].y;
+    if (((yi>py)!==(yj>py)) && (px < (xj-xi)*(py-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+
+// Compute total length of an edge segment that lies OUTSIDE the sofa polygon.
+// We sample the segment at STEPS sub-segments and sum lengths of those outside.
+function edgeLengthOutside(x1,y1,x2,y2,steps) {
+  steps = steps || 20;
+  const dx=(x2-x1), dy=(y2-y1);
+  let outside=0;
+  for(let k=0;k<steps;k++){
+    const t0=k/steps, t1=(k+1)/steps;
+    const mx=(x1+dx*(t0+t1)*0.5), my=(y1+dy*(t0+t1)*0.5);
+    if(!pointInSofa(mx,my)){
+      const segLen=Math.hypot(dx/steps, dy/steps);
+      outside+=segLen;
+    }
+  }
+  return outside;
+}
+
+// Closest point on polygon boundary to (px,py), and signed push direction
+function closestBoundaryPoint(px, py) {
+  const poly = getSofaCanvasPoly();
+  let bestDist = Infinity, bestX = px, bestY = py;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const ax=poly[j].x,ay=poly[j].y,bx=poly[i].x,by=poly[i].y;
+    const abx=bx-ax,aby=by-ay,apx=px-ax,apy=py-ay;
+    const t=Math.max(0,Math.min(1,(apx*abx+apy*aby)/(abx*abx+aby*aby+1e-9)));
+    const cx=ax+t*abx,cy=ay+t*aby;
+    const d=Math.hypot(px-cx,py-cy);
+    if(d<bestDist){bestDist=d;bestX=cx;bestY=cy;}
+  }
+  return {x:bestX,y:bestY,dist:bestDist};
+}
+
+// Boundary force: if a node is OUTSIDE the sofa, push it strongly inward.
+// If a node is INSIDE but close to boundary, apply gentle inward nudge.
+function computeBoundaryForces() {
+  const forces = new Float64Array(NODES.length * 2);
+  NODES.forEach((d, i) => {
+    if(d===dragging) return;
+    const inside = pointInSofa(d.x, d.y);
+    if(!inside) {
+      // Outside: strong push toward closest boundary point (then inward)
+      const bp = closestBoundaryPoint(d.x, d.y);
+      const dx = bp.x - d.x, dy = bp.y - d.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      // push proportional to distance outside, minimum force floor
+      const magnitude = Math.max(2.0, dist * 0.3);
+      forces[i*2]   = (dx/dist) * magnitude;
+      forces[i*2+1] = (dy/dist) * magnitude;
+    }
+    // (nodes inside: penalty force already handles edges; no extra nudge needed)
+  });
+  return forces;
+}
+
+// For each node, compute the net "pull toward sofa interior" force
+// from the penalty: gradient of sum_edges |e \ G|.
+// We approximate the gradient numerically for each endpoint.
+function computePenaltyForces() {
+  const forces = new Float64Array(NODES.length * 2); // [fx0,fy0, fx1,fy1, ...]
+  const EPS = 2.0;
+  const STEPS = 12; // coarser for perf
+  links.forEach(l => {
+    const si = NODES.indexOf(l.source), ti = NODES.indexOf(l.target);
+    if(si<0||ti<0) return;
+    const sx=l.source.x, sy=l.source.y, tx=l.target.x, ty=l.target.y;
+    const base = edgeLengthOutside(sx,sy,tx,ty,STEPS);
+    // gradient w.r.t. source x
+    const dsx = (edgeLengthOutside(sx+EPS,sy,tx,ty,STEPS)-base)/EPS;
+    const dsy = (edgeLengthOutside(sx,sy+EPS,tx,ty,STEPS)-base)/EPS;
+    const dtx = (edgeLengthOutside(sx,sy,tx+EPS,ty,STEPS)-base)/EPS;
+    const dty = (edgeLengthOutside(sx,sy,tx,ty+EPS,STEPS)-base)/EPS;
+    // penalty force = -gradient (minimize outside length)
+    forces[si*2]   -= dsx;
+    forces[si*2+1] -= dsy;
+    forces[ti*2]   -= dtx;
+    forces[ti*2+1] -= dty;
+  });
+  return forces;
+}
+
 function resize() {
   const stage = document.getElementById('stage');
   W = stage.clientWidth;
@@ -194,15 +309,37 @@ const N = NODES.length;
 const nodeMap = {};
 
 function recomputeTargets() {
+  // Target: uniformly inside sofa bounding box, keep only those inside
+  // Build a grid of candidate interior points
+  const fitScale = getFitScale();
+  const drawW = MATH_W * fitScale;
+  const drawH = MATH_H * fitScale;
+  const offX = (W - drawW) / 2;
+  const offY = (H - drawH) / 2;
+
+  // Interior target grid
+  const gridPts = [];
+  const GX = 30, GY = 15;
+  for(let gy=0;gy<=GY;gy++) for(let gx=0;gx<=GX;gx++) {
+    const cx = offX + (gx/GX)*drawW;
+    const cy = offY + (gy/GY)*drawH;
+    if(pointInSofa(cx,cy)) gridPts.push({x:cx,y:cy});
+  }
+  // fallback: centroid
+  if(gridPts.length===0) {
+    const cx = offX+drawW/2, cy = offY+drawH/2;
+    for(let i=0;i<N;i++) gridPts.push({x:cx,y:cy});
+  }
+
   NODES.forEach((d, i) => {
-    const idx = Math.floor(i * OUTER_PTS.length / N) % OUTER_PTS.length;
-    const [mx, my] = OUTER_PTS[idx];
-    const c = mathToCanvas(mx, my);
-    d.tx = c.x;
-    d.ty = c.y;
+    const idx = Math.floor(i * gridPts.length / N) % gridPts.length;
+    d.tx = gridPts[idx].x;
+    d.ty = gridPts[idx].y;
     if (!d._init) {
-      d.x = c.x + (Math.random()-0.5)*40;
-      d.y = c.y + (Math.random()-0.5)*40;
+      // spread randomly inside sofa
+      const pt = gridPts[Math.floor(Math.random()*gridPts.length)];
+      d.x = pt.x + (Math.random()-0.5)*20;
+      d.y = pt.y + (Math.random()-0.5)*20;
       d.vx = 0; d.vy = 0;
       d._init = true;
     }
@@ -224,6 +361,10 @@ NODES.forEach(d => {
 
 let shapeOn = true, freeOn = true, showLinks = true, showOutline = true;
 let shapeStr = 0.45;
+let edgeBaseAlpha = 0.18;   // base opacity for non-active edges
+let edgeBaseWidth = 0.5;    // base line width multiplier
+let penaltyStr = 1.0;       // penalty strength: ∑|e \ G| gradient force
+let boundaryStr = 1.2;      // boundary force: push nodes outside sofa inward
 let hovered = null, selected = null, dragging = null, dragOx = 0, dragOy = 0;
 
 document.getElementById('btn-shape').onclick = () => { shapeOn = !shapeOn; document.getElementById('btn-shape').classList.toggle('active', shapeOn); };
@@ -234,6 +375,10 @@ document.getElementById('btn-reset').onclick = () => {
 document.getElementById('chk-links').onchange = e => showLinks = e.target.checked;
 document.getElementById('chk-outline').onchange = e => showOutline = e.target.checked;
 document.getElementById('sl').oninput = e => { shapeStr=e.target.value/100; document.getElementById('slv').textContent=e.target.value; };
+document.getElementById('sl-boundary').oninput = e => { boundaryStr=e.target.value/100; document.getElementById('sl-boundary-v').textContent=e.target.value; };
+document.getElementById('sl-penalty').oninput = e => { penaltyStr=e.target.value/100; document.getElementById('sl-penalty-v').textContent=e.target.value; };
+document.getElementById('sl-ealpha').oninput = e => { edgeBaseAlpha=e.target.value/100; document.getElementById('sl-ealpha-v').textContent=e.target.value; };
+document.getElementById('sl-ewidth').oninput = e => { edgeBaseWidth=e.target.value/10; document.getElementById('sl-ewidth-v').textContent=e.target.value; };
 document.getElementById('xbtn').onclick = () => { document.getElementById('popup').style.display='none'; selected=null; };
 
 function nodeR(d) { return Math.max(4, 4 + d.weight * 0.45); }
@@ -349,6 +494,24 @@ function tick() {
       }
     }
   }
+  // Boundary force: strongly push nodes outside sofa back in
+  if (boundaryStr > 0.001) {
+    const bf = computeBoundaryForces();
+    NODES.forEach((d,i) => {
+      if(d===dragging) return;
+      d.vx += bf[i*2]   * boundaryStr;
+      d.vy += bf[i*2+1] * boundaryStr;
+    });
+  }
+  // Penalty force: push nodes so edges stay inside sofa (∑|e \ G|)
+  if (penaltyStr > 0.001) {
+    const pf = computePenaltyForces();
+    NODES.forEach((d,i) => {
+      if(d===dragging) return;
+      d.vx += pf[i*2]   * penaltyStr * 1.2;
+      d.vy += pf[i*2+1] * penaltyStr * 1.2;
+    });
+  }
   NODES.forEach(d => {
     if(d===dragging)return;
     d.vx*=damp;d.vy*=damp;
@@ -388,7 +551,7 @@ function drawLinks() {
     const active = focus && (l.source===focus||l.target===focus);
     const dim = focus && !active;
     ctx.save();
-    ctx.globalAlpha = dim ? 0.05 : (active ? 0.88 : 0.18);
+    ctx.globalAlpha = dim ? edgeBaseAlpha*0.25 : (active ? 0.88 : edgeBaseAlpha);
     const sx=l.source.x,sy=l.source.y,tx=l.target.x,ty=l.target.y;
     const dx=tx-sx,dy=ty-sy,dist=Math.hypot(dx,dy)||1;
     const r=nodeR(l.target)+1;
@@ -397,8 +560,15 @@ function drawLinks() {
 
     ctx.beginPath();
     ctx.moveTo(sx2,sy2); ctx.lineTo(ex,ey);
-    ctx.strokeStyle = active ? '#c8a96e' : 'rgba(180,175,165,1)';
-    ctx.lineWidth = active ? 1.4 : (l.type==='solid'?0.6:0.4);
+    const outsideFrac = (!active && penaltyStr>0.001)
+      ? edgeLengthOutside(sx,sy,tx,ty,8)/Math.max(1,Math.hypot(tx-sx,ty-sy))
+      : 0;
+    const edgeColor = active ? '#c8a96e'
+      : outsideFrac > 0.05
+        ? `rgba(220,${Math.round(130*(1-outsideFrac))},80,1)`
+        : 'rgba(180,175,165,1)';
+    ctx.strokeStyle = edgeColor;
+    ctx.lineWidth = active ? 1.4 : (l.type==='solid'? edgeBaseWidth*1.2 : edgeBaseWidth*0.8);
     if (l.type==='dashed') ctx.setLineDash([3,3]);
     else if (l.type==='dotted') ctx.setLineDash([1,4]);
     ctx.stroke();
@@ -431,6 +601,13 @@ function drawNode(d) {
   if (d.weight >= 8 && !dim) {
     ctx.beginPath(); ctx.arc(d.x,d.y,r+4,0,Math.PI*2);
     ctx.strokeStyle = c.fill+'55'; ctx.lineWidth=1.5; ctx.stroke();
+  }
+
+  // Red warning ring if node is outside sofa
+  if (!dim && !pointInSofa(d.x, d.y)) {
+    ctx.beginPath(); ctx.arc(d.x,d.y,r+6,0,Math.PI*2);
+    ctx.strokeStyle = 'rgba(255,80,60,0.7)'; ctx.lineWidth=1.5;
+    ctx.setLineDash([3,3]); ctx.stroke(); ctx.setLineDash([]);
   }
 
   ctx.beginPath();
