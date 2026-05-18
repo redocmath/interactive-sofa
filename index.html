@@ -9,6 +9,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <script src="graph_data.js"></script>
 <script src="sofa_data.js"></script>
+<script src="paper_index.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.min.js"></script>
 <style>
 :root {
   --fg: #0a0a0a;
@@ -416,6 +418,230 @@ body {
   animation: pulse 1.8s ease-in-out infinite;
 }
 
+/* ─── PDF PANEL ─────────────────────────────────────────────────────────── */
+#pdf-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(620px, 50vw);
+  background: var(--bg);
+  border-left: 1px solid var(--fg);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform .45s var(--ease);
+  box-shadow: -8px 0 0 rgba(10,10,10,0.04);
+}
+#pdf-panel.open { transform: translateX(0); }
+
+#pdf-panel .ph {
+  background: var(--fg);
+  color: var(--bg);
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--fg);
+}
+#pdf-panel .ph .ptag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border: 1px solid var(--bg);
+}
+#pdf-panel .ph .ptitle {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: -0.012em;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#pdf-panel .ph .pclose {
+  background: none;
+  border: 1px solid var(--bg);
+  color: var(--bg);
+  cursor: pointer;
+  padding: 3px 9px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  transition: all .15s var(--ease);
+}
+#pdf-panel .ph .pclose:hover {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+#pdf-panel .pnav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--mute-2);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--mute-4);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+#pdf-panel .pnav button {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  padding: 4px 8px;
+  border: 1px solid var(--mute-2);
+  background: var(--bg);
+  color: var(--mute-4);
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: all .15s var(--ease);
+}
+#pdf-panel .pnav button:hover:not(:disabled) {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+#pdf-panel .pnav button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+#pdf-panel .pnav .pinput {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  border: 1px solid var(--mute-2);
+  padding: 4px 7px;
+  width: 4ch;
+  text-align: center;
+  background: var(--bg);
+  color: var(--fg);
+  outline: none;
+  transition: border-color .15s;
+}
+#pdf-panel .pnav .pinput:focus { border-color: var(--fg); }
+#pdf-panel .pnav .pmeta { margin-left: auto; }
+#pdf-panel .pnav .pmeta b { color: var(--fg); font-weight: 500; }
+
+#pdf-panel .pbody {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--mute-1);
+  padding: 18px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--mute-3) transparent;
+}
+#pdf-panel .pbody::-webkit-scrollbar { width: 8px; }
+#pdf-panel .pbody::-webkit-scrollbar-track { background: transparent; }
+#pdf-panel .pbody::-webkit-scrollbar-thumb { background: var(--mute-3); border-radius: 0; }
+
+#pdf-canvas-wrap {
+  background: var(--bg);
+  box-shadow: 0 2px 14px rgba(0,0,0,0.08), 0 0 0 1px var(--mute-2);
+  margin: 0 auto;
+  display: block;
+  width: fit-content;
+}
+#pdf-canvas { display: block; }
+
+#pdf-panel .pstatus {
+  padding: 30px 24px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--mute-4);
+  line-height: 1.7;
+  text-align: center;
+}
+#pdf-panel .pstatus .err {
+  color: var(--fg);
+  font-weight: 500;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+#pdf-panel .pstatus code {
+  font-family: 'JetBrains Mono', monospace;
+  background: var(--fg);
+  color: var(--bg);
+  padding: 1px 5px;
+}
+#pdf-panel .ploading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--mute-4);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+#pdf-panel .ploading .bar {
+  display: inline-block;
+  width: 60px;
+  height: 1px;
+  background: var(--mute-2);
+  margin-left: 10px;
+  position: relative;
+  overflow: hidden;
+}
+#pdf-panel .ploading .bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 30%;
+  background: var(--fg);
+  animation: barSlide 1.2s linear infinite;
+}
+@keyframes barSlide {
+  0%   { left: -30%; }
+  100% { left: 100%; }
+}
+
+/* "Open in paper" button in popup */
+#popup .open-paper {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--mute-2);
+}
+#popup .open-paper button {
+  width: 100%;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  padding: 7px 10px;
+  border: 1px solid var(--fg);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: all .15s var(--ease);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+#popup .open-paper button:hover {
+  background: var(--fg);
+  color: var(--bg);
+}
+#popup .open-paper button .arrow {
+  display: inline-block;
+  transition: transform .15s var(--ease);
+}
+#popup .open-paper button:hover .arrow { transform: translateX(3px); }
+
+@media (max-width: 760px) {
+  #pdf-panel { width: 100vw; }
+  #pdf-panel .pbody { padding: 10px; }
+}
+
 /* ─── ANIMATIONS ────────────────────────────────────────────────────────── */
 @keyframes fadeDown {
   0%   { opacity: 0; transform: translateY(-12px); }
@@ -515,9 +741,34 @@ body {
     </div>
     <div class="cg attr">
       <span class="pulse"></span>
-      <span>BAEK <b>2024</b> · arXiv:2412.06703</span>
+      <span>BAEK <b>2024</b> · arXiv:2411.19826</span>
     </div>
   </footer>
+
+  <!-- ─── PDF PANEL ─────────────────────────────────────────────────────── -->
+  <aside id="pdf-panel" aria-hidden="true">
+    <div class="ph">
+      <span class="ptag" id="pdf-tag">PAPER</span>
+      <span class="ptitle" id="pdf-title">Optimality of Gerver's Sofa</span>
+      <button class="pclose" id="pdf-close">CLOSE ✕</button>
+    </div>
+    <div class="pnav" id="pdf-nav" style="display:none">
+      <button id="pdf-prev">← PREV</button>
+      <input type="number" min="1" class="pinput" id="pdf-page-input" value="1">
+      <button id="pdf-next">NEXT →</button>
+      <span class="pmeta">PAGE <b id="pdf-cur">1</b> / <b id="pdf-total">?</b></span>
+    </div>
+    <div class="pbody" id="pdf-body">
+      <div class="ploading" id="pdf-loading" style="display:none">LOADING PAPER <span class="bar"></span></div>
+      <div class="pstatus" id="pdf-status">
+        <div class="err">PDF NOT YET LOADED</div>
+        <div>Place the paper PDF at <code>./paper.pdf</code>,<br>or change <code>PAPER_URL</code> in the source.</div>
+      </div>
+      <div id="pdf-canvas-wrap" style="display:none">
+        <canvas id="pdf-canvas"></canvas>
+      </div>
+    </div>
+  </aside>
 </div>
 
 <script>
@@ -811,6 +1062,14 @@ function showPopup(node) {
   document.getElementById('pt').textContent = node.label;
   document.getElementById('ptag').textContent = (TYPE_NAME[node.type] || node.type).toUpperCase();
 
+  // If we have a paper index entry, show the printed number
+  const idxEntry = (window.PAPER_INDEX || {})[node.id];
+  if (idxEntry) {
+    const tagEl = document.getElementById('ptag');
+    tagEl.innerHTML = (idxEntry.env || TYPE_NAME[node.type] || '').toUpperCase()
+      + ` &middot; ${idxEntry.num}`;
+  }
+
   document.getElementById('pstats').innerHTML =
     `<span>WT<b>${node.weight}</b></span>` +
     `<span>IN<b>${node.indeg}</b></span>` +
@@ -845,6 +1104,14 @@ function showPopup(node) {
   };
   makeGroup('REFERENCED BY', node.usedBy);
   makeGroup('REFERENCES', node.uses);
+
+  // "Open in paper" button
+  const op = document.createElement('div'); op.className = 'open-paper';
+  const btn = document.createElement('button');
+  btn.innerHTML = 'OPEN IN PAPER <span class="arrow">→</span>';
+  btn.onclick = () => openPaperForNode(node);
+  op.appendChild(btn);
+  deps.appendChild(op);
 
   const pw = 296;
   let left = node.x + 16, top = node.y - 30;
@@ -1320,6 +1587,423 @@ function loop(now) {
 window.addEventListener('resize', () => { resize(); });
 resize();
 requestAnimationFrame(loop);
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PDF VIEWER
+// ═══════════════════════════════════════════════════════════════════════════
+const PAPER_URL = './paper.pdf';        // change this to point to your PDF
+const ARXIV_FALLBACK = 'https://arxiv.org/pdf/2411.19826';
+
+const pdfState = {
+  doc: null,
+  pages: [],          // sparse: [pageIndex-1] → {text, textLower, items} | null
+  currentPage: 1,
+  loading: false,
+  loadError: null,
+  renderTask: null,
+  lastHighlight: null,
+  currentNode: null,
+  pageOffset: null,   // physical PDF page = arabic (aux) page + pageOffset; auto-detected
+};
+
+const pdfPanel    = document.getElementById('pdf-panel');
+const pdfStatusEl = document.getElementById('pdf-status');
+const pdfLoadEl   = document.getElementById('pdf-loading');
+const pdfWrapEl   = document.getElementById('pdf-canvas-wrap');
+const pdfCanvas   = document.getElementById('pdf-canvas');
+const pdfCanvasCtx= pdfCanvas.getContext('2d');
+const pdfNavEl    = document.getElementById('pdf-nav');
+const pdfCurEl    = document.getElementById('pdf-cur');
+const pdfTotalEl  = document.getElementById('pdf-total');
+const pdfPageInput= document.getElementById('pdf-page-input');
+const pdfTagEl    = document.getElementById('pdf-tag');
+const pdfTitleEl  = document.getElementById('pdf-title');
+
+function openPdfPanel() {
+  pdfPanel.classList.add('open');
+  pdfPanel.setAttribute('aria-hidden', 'false');
+}
+function closePdfPanel() {
+  pdfPanel.classList.remove('open');
+  pdfPanel.setAttribute('aria-hidden', 'true');
+}
+document.getElementById('pdf-close').onclick = closePdfPanel;
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && pdfPanel.classList.contains('open')) {
+    closePdfPanel();
+  }
+});
+
+async function ensurePdfLoaded() {
+  if (pdfState.doc) return pdfState.doc;
+  if (pdfState.loading) {
+    while (pdfState.loading) await new Promise(r => setTimeout(r, 50));
+    return pdfState.doc;
+  }
+  if (!window.pdfjsLib) {
+    showPdfError('PDF.js library failed to load. Check your network/CSP.');
+    return null;
+  }
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js';
+
+  pdfState.loading = true;
+  pdfStatusEl.style.display = 'none';
+  pdfWrapEl.style.display = 'none';
+  pdfNavEl.style.display = 'none';
+  pdfLoadEl.style.display = 'flex';
+
+  try {
+    const doc = await window.pdfjsLib.getDocument(PAPER_URL).promise;
+    pdfState.doc = doc;
+    pdfTotalEl.textContent = doc.numPages;
+    pdfPageInput.max = doc.numPages;
+    // Lazy page text cache — populated on demand by ensurePageText().
+    pdfState.pages = new Array(doc.numPages).fill(null);
+    pdfNavEl.style.display = 'flex';
+    pdfWrapEl.style.display = 'block';
+    return doc;
+  } catch (err) {
+    pdfState.loadError = err;
+    showPdfError(err);
+    return null;
+  } finally {
+    pdfState.loading = false;
+    pdfLoadEl.style.display = 'none';
+  }
+}
+
+// Lazy text loader — only extracts text from a specific page when asked.
+async function ensurePageText(pageNum) {
+  if (!pdfState.doc || pageNum < 1 || pageNum > pdfState.doc.numPages) return null;
+  if (pdfState.pages[pageNum - 1]) return pdfState.pages[pageNum - 1];
+  const page = await pdfState.doc.getPage(pageNum);
+  const tc = await page.getTextContent();
+  const text = tc.items.map(it => it.str).join(' ');
+  const entry = { text, textLower: text.toLowerCase(), items: tc.items };
+  pdfState.pages[pageNum - 1] = entry;
+  return entry;
+}
+
+// Auto-detect the page offset between aux-file arabic pages and physical PDF pages.
+// LaTeX \frontmatter (title/abstract/TOC) sits before \mainmatter, shifting all
+// arabic page numbers. We find the LATEX-numerically-earliest labeled theorem and
+// search nearby physical pages for its printed heading. Caches result in pdfState.pageOffset.
+async function detectPageOffset() {
+  if (pdfState.pageOffset !== null) return pdfState.pageOffset;
+  if (!window.PAPER_INDEX) { pdfState.pageOffset = 0; return 0; }
+  // Pick the entry with smallest aux page (likely short, label adjacent to heading)
+  let candidate = null;
+  for (const id in window.PAPER_INDEX) {
+    const e = window.PAPER_INDEX[id];
+    if (!e.page || !e.env || !e.num) continue;
+    if (!candidate || e.page < candidate.page) candidate = e;
+  }
+  if (!candidate) { pdfState.pageOffset = 0; return 0; }
+  const needle = `${candidate.env} ${candidate.num}.`;
+  // Try offsets 0..16 (some books have lengthy frontmatter)
+  for (let off = 0; off <= 16; off++) {
+    const pp = candidate.page + off;
+    if (pp > pdfState.doc.numPages) break;
+    const pt = await ensurePageText(pp);
+    if (pt && pt.text.includes(needle)) {
+      pdfState.pageOffset = off;
+      return off;
+    }
+  }
+  pdfState.pageOffset = 0;   // could not detect; trust aux numbers as-is
+  return 0;
+}
+
+function showPdfError(err) {
+  pdfWrapEl.style.display = 'none';
+  pdfNavEl.style.display = 'none';
+  pdfStatusEl.style.display = 'block';
+  pdfStatusEl.innerHTML = `
+    <div class="err">PDF Could Not Be Loaded</div>
+    <div>${err && err.message ? err.message.replace(/</g,'&lt;') : err}</div>
+    <div style="margin-top:14px;">Place the paper PDF at <code>./paper.pdf</code><br>
+      or open it directly:
+      <a href="${ARXIV_FALLBACK}" target="_blank" style="color:var(--fg);text-decoration:underline;">${ARXIV_FALLBACK}</a>
+    </div>`;
+}
+
+// ─── Page lookup ───────────────────────────────────────────────────────────
+// Returns { page, matchText, tier }
+//   tier 1 = page from LaTeX .aux, heading text verified on that page
+//   tier 2 = page from .aux, heading text not found (still trust the .aux)
+//   tier 3 = no .aux entry — fall back to text scan (rare)
+async function findPageForNode(node) {
+  if (!pdfState.doc) return null;
+  const idx = (window.PAPER_INDEX || {})[node.id];
+  const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  if (idx && idx.page) {
+    const offset = await detectPageOffset();
+    const targetPhys = idx.page + offset;
+    const env = idx.env, numEsc = escape(idx.num);
+    const headingPat = new RegExp(`\\b${env}\\s+${numEsc}\\s*\\.`, '');
+    // LaTeX records the page of the \label{} command, which authors often place
+    // at the END of a theorem body. For multi-page theorems, the heading is on
+    // an earlier page. Search backward (and a hair forward) for the heading,
+    // preferring the EARLIEST page where it appears (= the heading location).
+    const SPAN_BACK = 4, SPAN_FWD = 1;
+    const candidates = [];
+    for (let d = -SPAN_BACK; d <= SPAN_FWD; d++) {
+      const p = targetPhys + d;
+      if (p >= 1 && p <= pdfState.doc.numPages) candidates.push(p);
+    }
+    candidates.sort((a, b) => a - b);   // earliest first
+    for (const p of candidates) {
+      const pt = await ensurePageText(p);
+      if (pt && headingPat.test(pt.text)) {
+        return { page: p, matchText: `${env} ${idx.num}`, tier: 1 };
+      }
+    }
+    // Fallback to numeric without the trailing period
+    const numericPat = new RegExp(`\\b${env}\\s+${numEsc}\\b`, '');
+    for (const p of candidates) {
+      const pt = pdfState.pages[p - 1];
+      if (pt && numericPat.test(pt.text)) {
+        return { page: p, matchText: `${env} ${idx.num}`, tier: 1 };
+      }
+    }
+    // .aux says this physical page — trust it even if we couldn't find a heading
+    return { page: targetPhys, matchText: null, tier: 2 };
+  }
+
+  // ─── Fallback: full-document text scan (only for nodes missing from index) ───
+  // Index ALL pages now; warn since this is slow on long papers.
+  for (let i = 1; i <= pdfState.doc.numPages; i++) {
+    if (!pdfState.pages[i - 1]) await ensurePageText(i);
+  }
+  const label = node.label || '';
+  const labelEsc = escape(label).replace(/\s+/g, '\\s+');
+  const labelPatterns = [
+    new RegExp(`\\(\\s*${labelEsc}\\s*\\)`, 'i'),
+    new RegExp(`\\b${labelEsc}\\b`, 'i'),
+  ];
+  for (const pat of labelPatterns) {
+    for (let i = 0; i < pdfState.pages.length; i++) {
+      if (pat.test(pdfState.pages[i].text)) {
+        return { page: i + 1, matchText: label, tier: 2 };
+      }
+    }
+  }
+  const words = label.toLowerCase().split(/[\s\-_]+/).filter(w => w.length >= 4 && /^[a-z]+$/.test(w));
+  if (!words.length) return null;
+  let best = { page: null, score: 0 };
+  for (let i = 0; i < pdfState.pages.length; i++) {
+    const txt = pdfState.pages[i].textLower;
+    let score = 0;
+    for (const w of words) {
+      const occ = Math.min(3, (txt.match(new RegExp(`\\b${escape(w)}\\b`, 'g')) || []).length);
+      score += occ;
+    }
+    score -= i * 0.02;
+    if (score > best.score) best = { page: i + 1, score };
+  }
+  return best.page ? { page: best.page, matchText: null, tier: 3 } : null;
+}
+
+// ─── Render a page with optional highlight ─────────────────────────────────
+async function renderPdfPage(pageNum, highlightText) {
+  if (!pdfState.doc) return;
+  pageNum = Math.max(1, Math.min(pdfState.doc.numPages, pageNum));
+  pdfState.currentPage = pageNum;
+  pdfCurEl.textContent = pageNum;
+  pdfPageInput.value = pageNum;
+
+  // Cancel previous render
+  if (pdfState.renderTask) {
+    try { pdfState.renderTask.cancel(); } catch(e) {}
+  }
+
+  const page = await pdfState.doc.getPage(pageNum);
+  const container = document.getElementById('pdf-body');
+  const cw = container.clientWidth - 36;
+  const v0 = page.getViewport({ scale: 1 });
+  const targetScale = cw / v0.width;
+  const outputScale = window.devicePixelRatio || 1;
+  const viewport = page.getViewport({ scale: targetScale });
+
+  pdfCanvas.width  = Math.floor(viewport.width  * outputScale);
+  pdfCanvas.height = Math.floor(viewport.height * outputScale);
+  pdfCanvas.style.width  = Math.floor(viewport.width)  + 'px';
+  pdfCanvas.style.height = Math.floor(viewport.height) + 'px';
+  const transform = outputScale !== 1
+    ? [outputScale, 0, 0, outputScale, 0, 0]
+    : null;
+
+  pdfState.renderTask = page.render({
+    canvasContext: pdfCanvasCtx,
+    viewport,
+    transform,
+  });
+  try {
+    await pdfState.renderTask.promise;
+  } catch (e) {
+    if (e && e.name === 'RenderingCancelledException') return;
+    throw e;
+  }
+
+  // Highlight matched phrase
+  if (highlightText) {
+    await drawHighlight(viewport, highlightText, outputScale);
+  }
+  // Update prev/next disabled state
+  document.getElementById('pdf-prev').disabled = pageNum <= 1;
+  document.getElementById('pdf-next').disabled = pageNum >= pdfState.doc.numPages;
+}
+
+async function drawHighlight(viewport, needle, outputScale) {
+  const page = await ensurePageText(pdfState.currentPage);
+  if (!page) return;
+  const needleLow = needle.toLowerCase().trim();
+  if (!needleLow) return;
+  const Util = window.pdfjsLib.Util;
+  pdfCanvasCtx.save();
+  pdfCanvasCtx.fillStyle = 'rgba(255, 230, 0, 0.32)';
+  pdfCanvasCtx.strokeStyle = 'rgba(10, 10, 10, 0.55)';
+  pdfCanvasCtx.lineWidth = 1;
+
+  const items = page.items;
+  const isMultiWord = /\s/.test(needleLow);
+  let firstHighlightY = null;
+
+  const drawItemBox = (it) => {
+    if (!it.str || !it.str.trim()) return;
+    const m = Util.transform(viewport.transform, it.transform);
+    const fontH = Math.hypot(m[2], m[3]);
+    const itemW = it.width * Math.hypot(viewport.transform[0], viewport.transform[1]);
+    const x = m[4] * outputScale - 2;
+    const y = (m[5] - fontH) * outputScale - 2;
+    const w = itemW * outputScale + 4;
+    const h = fontH * outputScale + 4;
+    pdfCanvasCtx.fillRect(x, y, w, h);
+    pdfCanvasCtx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    if (firstHighlightY === null) firstHighlightY = m[5];
+  };
+
+  outer: for (let i = 0; i < items.length; i++) {
+    const itStr = (items[i].str || '').toLowerCase();
+    if (!itStr.trim()) continue;
+
+    if (!isMultiWord) {
+      // Single-word needle: require exact substring within this single item
+      if (itStr.includes(needleLow)) {
+        drawItemBox(items[i]);
+        break;
+      }
+    } else {
+      // Multi-word needle: try concatenating with adjacent items on the same baseline
+      const baselineY = items[i].transform[5];
+      let concat = itStr;
+      let lastIdx = i;
+      for (let j = i + 1; j < Math.min(i + 8, items.length); j++) {
+        const ny = items[j].transform[5];
+        if (Math.abs(ny - baselineY) > 2) break;          // moved to a new line
+        const nj = (items[j].str || '').toLowerCase();
+        concat += (nj.startsWith(' ') || concat.endsWith(' ') ? '' : ' ') + nj;
+        if (concat.includes(needleLow)) { lastIdx = j; break; }
+      }
+      if (concat.includes(needleLow)) {
+        for (let k = i; k <= lastIdx; k++) drawItemBox(items[k]);
+        break outer;
+      }
+    }
+  }
+  pdfCanvasCtx.restore();
+
+  if (firstHighlightY !== null) {
+    const body = document.getElementById('pdf-body');
+    const canvasTop = pdfCanvas.getBoundingClientRect().top;
+    const bodyTop   = body.getBoundingClientRect().top;
+    const canvasOffsetInBody = body.scrollTop + (canvasTop - bodyTop);
+    const targetY = canvasOffsetInBody + firstHighlightY - 90;
+    body.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
+  } else {
+    document.getElementById('pdf-body').scrollTop = 0;
+  }
+}
+
+// ─── Open paper for a specific node ────────────────────────────────────────
+async function openPaperForNode(node) {
+  pdfState.currentNode = node;
+  pdfTagEl.textContent = (TYPE_NAME[node.type] || node.type).toUpperCase();
+  pdfTitleEl.textContent = node.label;
+  openPdfPanel();
+
+  const doc = await ensurePdfLoaded();
+  if (!doc) return;
+
+  let target;
+  if (node._pdfPage != null) {
+    target = { page: node._pdfPage, matchText: node._pdfMatch, tier: node._pdfTier };
+  } else {
+    target = await findPageForNode(node);
+    if (target) {
+      node._pdfPage  = target.page;
+      node._pdfMatch = target.matchText;
+      node._pdfTier  = target.tier;
+    }
+  }
+
+  // Show "approx" hint in the title bar only when truly fuzzy (tier 3)
+  if (target && target.tier === 3) {
+    pdfTitleEl.innerHTML =
+      `${node.label} <span style="font-family:'JetBrains Mono',monospace;font-size:9px;` +
+      `font-weight:400;padding:2px 5px;border:1px solid var(--bg);margin-left:6px;` +
+      `letter-spacing:.12em;">~ APPROX</span>`;
+  } else if (target && target.tier === 1) {
+    // Show the resolved number — high confidence
+    const idxEntry = (window.PAPER_INDEX || {})[node.id];
+    if (idxEntry) {
+      pdfTitleEl.innerHTML =
+        `${node.label} <span style="font-family:'JetBrains Mono',monospace;font-size:10px;` +
+        `font-weight:400;padding:2px 5px;background:var(--bg);color:var(--fg);margin-left:6px;` +
+        `letter-spacing:.05em;">${idxEntry.env} ${idxEntry.num}</span>`;
+    }
+  }
+
+  if (target) {
+    await renderPdfPage(target.page, target.matchText);
+  } else {
+    await renderPdfPage(1);
+  }
+}
+
+// Page nav controls
+document.getElementById('pdf-prev').onclick = () => {
+  if (pdfState.doc && pdfState.currentPage > 1) {
+    renderPdfPage(pdfState.currentPage - 1);
+  }
+};
+document.getElementById('pdf-next').onclick = () => {
+  if (pdfState.doc && pdfState.currentPage < pdfState.doc.numPages) {
+    renderPdfPage(pdfState.currentPage + 1);
+  }
+};
+pdfPageInput.onchange = (e) => {
+  const v = parseInt(e.target.value, 10);
+  if (pdfState.doc && v >= 1 && v <= pdfState.doc.numPages) {
+    renderPdfPage(v);
+  } else {
+    e.target.value = pdfState.currentPage;
+  }
+};
+// Re-render on resize (debounced)
+let _resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(() => {
+    if (pdfState.doc && pdfPanel.classList.contains('open')) {
+      const node = pdfState.currentNode;
+      const hl = node && node._pdfPage === pdfState.currentPage ? node._pdfMatch : null;
+      renderPdfPage(pdfState.currentPage, hl);
+    }
+  }, 250);
+});
 </script>
 </body>
 </html>
